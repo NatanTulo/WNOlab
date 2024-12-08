@@ -8,7 +8,7 @@ r = a*np.sqrt(3)/3  # Promień okręgu opisanego na trójkącie
 steps = 10000  # Liczba kroków animacji
 interval = 10  # Interwał między klatkami w ms
 total_time = steps * interval / 1000  # Całkowity czas animacji w sekundach
-first_point_x = -0.7
+first_point_x = -1
 rotation_point = 2  # Domyślnie zaczynamy od obrotu wokół punktu 2
 
 # Dodaj po innych zmiennych globalnych
@@ -20,6 +20,9 @@ triangle_state = None  # Przechowuje stan trójkąta w momencie kolizji (x1,y1,x
 
 # Dodaj po innych zmiennych globalnych
 current_triangle_state = None  # Przechowuje aktualny stan trójkąta po każdym obrocie
+
+# Dodaj po innych zmiennych globalnych
+total_angle = 0  # Całkowity kąt obrotu
 
 # Funkcja bazowa
 def f(x):
@@ -137,7 +140,7 @@ def find_closest_point_on_function(x, y, window=0.1):
     closest_idx = np.argmin(distances)
     return x_window[closest_idx], y_window[closest_idx], distances[closest_idx]
 
-def is_point_on_function(x, y, tolerance=0.5):
+def is_point_on_function(x, y, tolerance=0.1):
     # Znajdujemy najbliższy punkt na funkcji i odległość do niego
     _, closest_y, min_distance = find_closest_point_on_function(x, y)
     
@@ -174,24 +177,23 @@ def update(frame):
         current_triangle_state = None
     
     if current_triangle_state is None:
-        # Pierwsze wywołanie - używamy początkowego położenia trójkąta
         x1, y1, x2, y2, x3, y3 = find_triangle(first_point_x, a, x_vals, y_vals)
     else:
-        # Używamy aktualnego stanu trójkąta
         x1, y1, x2, y2, x3, y3 = current_triangle_state
         
-    angle = -(2 * np.pi * frame) / steps
+    # Stały przyrost kąta w każdej klatce
+    angle_increment = -2 * np.pi / 100  # Pełny obrót co 100 klatek
     
-    # Wykonujemy obrót wokół odpowiedniego punktu
+    # Wykonujemy obrót wokół odpowiedniego punktu używając przyrostu kąta
     if rotation_point == 1:
-        x2, y2 = rotate_point(x2, y2, x1, y1, angle)
-        x3, y3 = rotate_point(x3, y3, x1, y1, angle)
+        x2, y2 = rotate_point(x2, y2, x1, y1, angle_increment)
+        x3, y3 = rotate_point(x3, y3, x1, y1, angle_increment)
     elif rotation_point == 2:
-        x1, y1 = rotate_point(x1, y1, x2, y2, angle)
-        x3, y3 = rotate_point(x3, y3, x2, y2, angle)
+        x1, y1 = rotate_point(x1, y1, x2, y2, angle_increment)
+        x3, y3 = rotate_point(x3, y3, x2, y2, angle_increment)
     elif rotation_point == 3:
-        x1, y1 = rotate_point(x1, y1, x3, y3, angle)
-        x2, y2 = rotate_point(x2, y2, x3, y3, angle)
+        x1, y1 = rotate_point(x1, y1, x3, y3, angle_increment)
+        x2, y2 = rotate_point(x2, y2, x3, y3, angle_increment)
     
     # Aktualizujemy aktualny stan trójkąta po każdym obrocie
     current_triangle_state = (x1, y1, x2, y2, x3, y3)

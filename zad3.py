@@ -1,12 +1,13 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
+import math  # dodajemy import math
 
 # Parametry
 a = 1  # Długość boku trójkąta równobocznego
 steps = 1000  # Liczba kroków animacji
 interval = 10  # Interwał między klatkami w ms
-first_point_x = -0.9
+first_point_x = -1  # Będzie aktualizowany w zależności od wybranej funkcji
 rotation_point = 2  # Domyślnie zaczynamy od obrotu wokół punktu 2
 
 triangle_state = None  # Przechowuje stan trójkąta w momencie kolizji (x1,y1,x2,y2,x3,y3)
@@ -14,18 +15,83 @@ triangle_state = None  # Przechowuje stan trójkąta w momencie kolizji (x1,y1,x
 # Dodaj po innych zmiennych globalnych
 current_triangle_state = None  # Przechowuje aktualny stan trójkąta po każdym obrocie
 
-# Funkcja bazowa
-def f(x):
-    return 5 * x**3 - 10 * x**2 + np.sin(x) - 4
+def create_safe_function(expression):
+    """Tworzy bezpieczną funkcję z wyrażenia wprowadzonego przez użytkownika"""
+    global first_point_x
+    
+    # Dozwolone funkcje matematyczne
+    safe_dict = {
+        'sin': np.sin, 'cos': np.cos, 'tan': np.tan,
+        'exp': np.exp, 'log': np.log, 'sqrt': np.sqrt,
+        'abs': abs, 'pi': np.pi, 'e': np.e,
+        'pow': np.power  # dodajemy funkcję potęgowania
+    }
+    
+    # Zamiana wyrażenia e^x na exp(x)
+    if 'e^' in expression:
+        expression = expression.replace('e^', 'exp(') + ')'
+    
+    # Funkcja domyślna i jej parametry
+    if not expression.strip():
+        print("Użyję funkcji domyślnej.")
+        first_point_x = -1
+        return lambda x: 5 * x**3 - 10 * x**2 + np.sin(x) - 4
+    
+    try:
+        # Tworzymy funkcję lambda z wyrażenia
+        return lambda x: eval(expression, {"__builtins__": {}}, {**safe_dict, 'x': x, 'np': np})
+    except:
+        print("Błąd w wyrażeniu funkcji. Użyję funkcji domyślnej.")
+        first_point_x = -1
+        return lambda x: 5 * x**3 - 10 * x**2 + np.sin(x) - 4
+
+# Pobieramy funkcję od użytkownika
+print("Wprowadź funkcję matematyczną używając zmiennej 'x' (np. 'exp(x)' lub '5*x**3 - 10*x**2 + sin(x) - 4'):")
+user_function = input()
+f = create_safe_function(user_function)
+
+# Pobieranie punktu startowego
+print("\nCzy chcesz ustawić własny punkt startowy? (t/n):")
+custom_start = input().lower().startswith('t')
+
+if custom_start:
+    try:
+        print("Podaj współrzędną x punktu startowego:")
+        first_point_x = float(input())
+    except:
+        print("Błędny format. Używam domyślnej wartości x = -1")
+        first_point_x = -1
+
+# Ustawiamy domyślne zakresy
+if not user_function.strip():  # dla funkcji domyślnej
+    x_min, x_max = -2, 3
+    y_min, y_max = -15, 5
+else:  # dla własnej funkcji
+    x_min, x_max = -10, 10
+    y_min, y_max = -10, 10
+
+# Pobieranie zakresów osi dla obu przypadków
+print("\nCzy chcesz użyć własnych zakresów osi? (t/n):")
+custom_range = input().lower().startswith('t')
+
+if custom_range:
+    try:
+        print("Podaj zakres x (xmin xmax):")
+        x_min, x_max = map(float, input().split())
+        print("Podaj zakres y (ymin ymax):")
+        y_min, y_max = map(float, input().split())
+    except:
+        print("Błędny format. Używam domyślnych zakresów.")
+        # Zachowujemy już ustawione zakresy
 
 # Dane funkcji
-x_vals = np.linspace(-1, 2.4, 5000)  # Gęsta siatka dla precyzyjnych obliczeń
+x_vals = np.linspace(x_min, x_max, 5000)  # Gęsta siatka dla precyzyjnych obliczeń
 y_vals = f(x_vals)
 
 # Rysowanie
 fig, ax = plt.subplots()
-ax.set_xlim(-2, 3)
-ax.set_ylim(-15, 5)
+ax.set_xlim(x_min, x_max)
+ax.set_ylim(y_min, y_max)
 ax.set_aspect('equal')
 
 # Elementy graficzne

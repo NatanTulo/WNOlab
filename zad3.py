@@ -5,8 +5,8 @@ from matplotlib.animation import FuncAnimation
 # Parametry
 a = 1  # Długość boku trójkąta równobocznego
 r = a*np.sqrt(3)/3  # Promień okręgu opisanego na trójkącie
-steps = 100  # Liczba kroków animacji
-interval = 20  # Interwał między klatkami w ms
+steps = 10000  # Liczba kroków animacji
+interval = 10  # Interwał między klatkami w ms
 total_time = steps * interval / 1000  # Całkowity czas animacji w sekundach
 first_point_x = -0.7
 rotation_point = 2  # Domyślnie zaczynamy od obrotu wokół punktu 2
@@ -17,6 +17,9 @@ fixed_point = None  # Przechowuje współrzędne punktu obrotu po kolizji
 
 # Zmień zmienną fixed_point na triangle_state
 triangle_state = None  # Przechowuje stan trójkąta w momencie kolizji (x1,y1,x2,y2,x3,y3)
+
+# Dodaj po innych zmiennych globalnych
+current_triangle_state = None  # Przechowuje aktualny stan trójkąta po każdym obrocie
 
 # Funkcja bazowa
 def f(x):
@@ -134,7 +137,7 @@ def find_closest_point_on_function(x, y, window=0.1):
     closest_idx = np.argmin(distances)
     return x_window[closest_idx], y_window[closest_idx], distances[closest_idx]
 
-def is_point_on_function(x, y, tolerance=0.03):
+def is_point_on_function(x, y, tolerance=0.5):
     # Znajdujemy najbliższy punkt na funkcji i odległość do niego
     _, closest_y, min_distance = find_closest_point_on_function(x, y)
     
@@ -162,19 +165,20 @@ def check_collision_with_function(x1, y1, x2, y2, x3, y3):
     return None
 
 def update(frame):
-    global first_point_x, rotation_point, triangle_state
+    global first_point_x, rotation_point, triangle_state, current_triangle_state
     if frame == 0:
         x_curve.clear()
         y_curve.clear()
         rotation_point = 2
         triangle_state = None
+        current_triangle_state = None
     
-    if triangle_state is None:
-        # Używamy pierwotnego położenia trójkąta
+    if current_triangle_state is None:
+        # Pierwsze wywołanie - używamy początkowego położenia trójkąta
         x1, y1, x2, y2, x3, y3 = find_triangle(first_point_x, a, x_vals, y_vals)
     else:
-        # Używamy zapamiętanego stanu trójkąta
-        x1, y1, x2, y2, x3, y3 = triangle_state
+        # Używamy aktualnego stanu trójkąta
+        x1, y1, x2, y2, x3, y3 = current_triangle_state
         
     angle = -(2 * np.pi * frame) / steps
     
@@ -189,11 +193,14 @@ def update(frame):
         x1, y1 = rotate_point(x1, y1, x3, y3, angle)
         x2, y2 = rotate_point(x2, y2, x3, y3, angle)
     
-    # Sprawdzamy kolizję i zapisujemy cały stan trójkąta
+    # Aktualizujemy aktualny stan trójkąta po każdym obrocie
+    current_triangle_state = (x1, y1, x2, y2, x3, y3)
+    
+    # Sprawdzamy kolizję i ustawiamy nowy punkt obrotu
     collision_point = check_collision_with_function(x1, y1, x2, y2, x3, y3)
-    if collision_point is not None and triangle_state is None:
+    if collision_point is not None:
         rotation_point = collision_point
-        triangle_state = (x1, y1, x2, y2, x3, y3)
+        triangle_state = current_triangle_state
     
     # Reszta funkcji update pozostaje bez zmian...
     

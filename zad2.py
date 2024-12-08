@@ -1,79 +1,114 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
+from scipy.interpolate import interp1d
 
-def map_value(x, in_min, in_max, out_min, out_max):
-    return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min
+# Parametry
+r = 0.5  # Promień okręgu
+steps = 500  # Liczba kroków animacji
+interval = 20  # Interwał między klatkami w ms
+total_time = steps * interval / 1000  # Całkowity czas animacji w sekundach
 
-def funkcja(x):
-    return 5*x*x*x - 10*x*x + np.sin(x) - 4
+# Funkcja bazowa
+def f(x):
+    return 5 * x**3 - 10 * x**2 + np.sin(x) - 4
 
-def funkcja_pochodna(x, h=1e-5):
-    return (funkcja(x + h) - funkcja(x)) / h
+# Pochodna funkcji
+def df(x):
+    return 15 * x**2 - 20 * x + np.cos(x)
 
-t0 = np.arange(-5.0, 5.0, 0.02)
-t1 = np.arange(0.0, 1.2, 0.02)
+# Dane funkcji
+x_vals = np.linspace(-1, 2.4, 5000)  # Gęsta siatka dla precyzyjnych obliczeń
+y_vals = f(x_vals)
 
+# Obliczenie długości łuku
+dx = np.diff(x_vals)
+dy = np.diff(y_vals)
+ds = np.sqrt(dx**2 + dy**2)
+s_vals = np.concatenate(([0], np.cumsum(ds)))  # Długość łuku jako funkcja x
+
+# Funkcje interpolacyjne
+x_of_s = interp1d(s_vals, x_vals)
+y_of_s = interp1d(s_vals, y_vals)
+df_of_s = interp1d(s_vals, df(x_vals))
+
+# Całkowita długość łuku
+total_length = s_vals[-1]
+
+# Prędkość kątowa
+omega = (total_length / r) / total_time
+
+# Czas dla każdej klatki
+t_vals = np.linspace(0, total_time, steps)
+
+# Kąt toczenia i długość łuku w czasie
+theta_vals = -omega * t_vals
+s_t = r * (-theta_vals)
+
+# Pozycja na krzywej
+x_outer = x_of_s(s_t)
+y_outer = y_of_s(s_t)
+
+# Kąt normalnej do krzywej
+normals = np.arctan(df_of_s(s_t))
+
+# Pozycja środka okręgu
+x_circle = x_outer - r * np.sin(normals)
+y_circle = y_outer + r * np.cos(normals)
+
+# Pozycja punktu na obracającym się okręgu
+x_inner_circle = x_circle + r * np.cos(theta_vals)
+y_inner_circle = y_circle + r * np.sin(theta_vals)
+
+# Rysowanie
 fig, ax = plt.subplots()
-ax.set_aspect('equal', adjustable='box')
+ax.set_xlim(-2, 3)
+ax.set_ylim(-15, 5)
+ax.set_aspect('equal')
 
-# Rysowanie podstawowej funkcji
-line0 = ax.plot(t0, funkcja(t0), 'b')
+# Elementy graficzne
+ax.plot(x_vals, y_vals, 'g-', lw=0.5)  # Funkcja bazowa
+small_circle, = ax.plot([], [], 'b--', lw=0.5)  # Okrąg toczący się
+point_inner, = ax.plot([], [], 'ro')  # Punkt na obrzeżu okręgu
+radius_line, = ax.plot([], [], 'b-', lw=1)  # Promień wodzący
+curve, = ax.plot([], [], 'k-', lw=1)  # Epicykloida
 
-# Okrąg
-line1, = ax.plot([], [], 'k')
-
-# Inicjalizacja pustych linii
-line2, = ax.plot([], [], 'k')
-line3, = ax.plot([], [], 'r--')
+# Ścieżka epicykloidy
+x_curve, y_curve = [], []
 
 def init():
-    line1.set_data([], [])
-    line2.set_data([], [])
-    line3.set_data([], [])
-    return line1, line2, line3
+    small_circle.set_data([], [])
+    point_inner.set_data([], [])
+    radius_line.set_data([], [])
+    curve.set_data([], [])
+    return small_circle, point_inner, radius_line, curve
 
 def update(frame):
-    mapped_frame = map_value(frame, 0, 1, -0.6, 2.6) # skrajne wartości X dla widoku funkcji
+    if frame == 0:
+        x_curve.clear()
+        y_curve.clear()
+    # Aktualny kąt i pozycje
+    theta = theta_vals[frame]
+    x_c = x_circle[frame]
+    y_c = y_circle[frame]
     
-    # Obliczenie punktu na funkcji
-    y_func = funkcja(mapped_frame)
-    
-    # Obliczenie pochodnej funkcji w danym punkcie
-    derivative = funkcja_pochodna(mapped_frame)
-    
-    # Kąt styczny do funkcji
-    angle = np.arctan(derivative)
-    
-    # Promień okręgu
-    r = 0.5
-    
-    # Obliczenie współrzędnych okręgu
-    x1 = np.sin(2*np.pi*t1) * r
-    y1 = np.cos(2*np.pi*t1) * r
-    
-    # Obrót i translacja okręgu
-    rotation_matrix = np.array([
-        [np.cos(angle), -np.sin(angle)],
-        [np.sin(angle), np.cos(angle)]
-    ])
-    
-    rotated_points = np.dot(np.column_stack([x1, y1]), rotation_matrix)
-    
-    # Przesunięcie okręgu do punktu na funkcji
-    perpendicular_angle = angle + np.pi/2
-    x_offset = r * np.cos(perpendicular_angle)
-    y_offset = r * np.sin(perpendicular_angle)
-    
-    x1 = rotated_points[:, 0] + mapped_frame + x_offset
-    y1 = rotated_points[:, 1] + y_func + y_offset
-    
-    line1.set_data(x1, y1)
-    
-    return line1, line2, line3
+    # Zaktualizuj mały okrąg
+    theta_full = np.linspace(0, 2 * np.pi, 100)
+    small_circle.set_data(
+        x_c + r * np.cos(theta_full),
+        y_c + r * np.sin(theta_full)
+    )
+    # Punkt na obrzeżu okręgu
+    x_p = x_inner_circle[frame]
+    y_p = y_inner_circle[frame]
+    point_inner.set_data([x_p], [y_p])
+    # Promień wodzący
+    radius_line.set_data([x_c, x_p], [y_c, y_p])
+    # Zaktualizuj epicykloidę
+    x_curve.append(x_p)
+    y_curve.append(y_p)
+    curve.set_data(x_curve, y_curve)
+    return small_circle, point_inner, radius_line, curve
 
-ani = FuncAnimation(fig, update, frames=np.linspace(0, 1, 100), init_func=init, blit=True)
-plt.grid(True)
-plt.xlim(-5, 5)
-plt.ylim(-10, 10)
+ani = FuncAnimation(fig, update, frames=steps, init_func=init, interval=interval, blit=True)
 plt.show()

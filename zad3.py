@@ -4,25 +4,15 @@ from matplotlib.animation import FuncAnimation
 
 # Parametry
 a = 1  # Długość boku trójkąta równobocznego
-r = a*np.sqrt(3)/3  # Promień okręgu opisanego na trójkącie
-steps = 10000  # Liczba kroków animacji
+steps = 1000  # Liczba kroków animacji
 interval = 10  # Interwał między klatkami w ms
-total_time = steps * interval / 1000  # Całkowity czas animacji w sekundach
-first_point_x = -1
+first_point_x = -0.9
 rotation_point = 2  # Domyślnie zaczynamy od obrotu wokół punktu 2
 
-# Dodaj po innych zmiennych globalnych
-next_point_to_check = 1  # Kolejny punkt do sprawdzenia kolizji (1, 2 lub 3)
-fixed_point = None  # Przechowuje współrzędne punktu obrotu po kolizji
-
-# Zmień zmienną fixed_point na triangle_state
 triangle_state = None  # Przechowuje stan trójkąta w momencie kolizji (x1,y1,x2,y2,x3,y3)
 
 # Dodaj po innych zmiennych globalnych
 current_triangle_state = None  # Przechowuje aktualny stan trójkąta po każdym obrocie
-
-# Dodaj po innych zmiennych globalnych
-total_angle = 0  # Całkowity kąt obrotu
 
 # Funkcja bazowa
 def f(x):
@@ -31,9 +21,6 @@ def f(x):
 # Dane funkcji
 x_vals = np.linspace(-1, 2.4, 5000)  # Gęsta siatka dla precyzyjnych obliczeń
 y_vals = f(x_vals)
-
-# Czas dla każdej klatki
-t_vals = np.linspace(0, total_time, steps)
 
 # Rysowanie
 fig, ax = plt.subplots()
@@ -44,12 +31,12 @@ ax.set_aspect('equal')
 # Elementy graficzne
 ax.plot(x_vals, y_vals, 'g-', lw=0.5)  # Funkcja bazowa
 point1, = ax.plot([], [], 'ro')  # wierzchołek trójkąta
-point2, = ax.plot([], [], 'go')  # wierzchołek trójkąta
-point3, = ax.plot([], [], 'bo')  # wierzchołek trójkąta
+point2, = ax.plot([], [], 'g.')  # wierzchołek trójkąta
+point3, = ax.plot([], [], 'b.')  # wierzchołek trójkąta
 side1, = ax.plot([], [], 'b-', lw=1)  # Bok trójkąta
 side2, = ax.plot([], [], 'b-', lw=1)  # Bok trójkąta
 side3, = ax.plot([], [], 'b-', lw=1)  # Bok trójkąta
-radius_line, = ax.plot([], [], 'b-', lw=1)  # Promień wodzący
+radius_line, = ax.plot([], [], 'k-', lw=1)  # Promień wodzący
 curve, = ax.plot([], [], 'k-', lw=1)  # Epicykloida
 
 # Ścieżka epicykloidy
@@ -65,7 +52,7 @@ def init():
     side1.set_data([x1, x2], [y1, y2])
     side2.set_data([x2, x3], [y2, y3])
     side3.set_data([x3, x1], [y3, y1])
-    radius_line.set_data([], [])
+    radius_line.set_data([(x3+x2)/2,x1], [(y3+y2)/2,y1])
     curve.set_data([], [])
     return point1, point2, point3, side1, side2, side3, radius_line, curve
 
@@ -138,14 +125,12 @@ def find_closest_point_on_function(x, y, window=0.1):
     
     # Znajdujemy indeks najbliższego punktu
     closest_idx = np.argmin(distances)
-    return x_window[closest_idx], y_window[closest_idx], distances[closest_idx]
+    return  distances[closest_idx]
 
 def is_point_on_function(x, y, tolerance=0.1):
     # Znajdujemy najbliższy punkt na funkcji i odległość do niego
-    _, closest_y, min_distance = find_closest_point_on_function(x, y)
-    
-    # Sprawdzamy czy punkt jest blisko funkcji i nad nią (y > closest_y)
-    is_above = y > closest_y
+    min_distance = find_closest_point_on_function(x, y)
+
     is_close = min_distance < tolerance
     
     print(f"Odległość od funkcji: {min_distance}, isSkok: {min_distance<tolerance}")
@@ -204,8 +189,6 @@ def update(frame):
         rotation_point = collision_point
         triangle_state = current_triangle_state
     
-    # Reszta funkcji update pozostaje bez zmian...
-    
     side1.set_data([x1, x2], [y1, y2])
     side2.set_data([x2, x3], [y2, y3])
     side3.set_data([x3, x1], [y3, y1])
@@ -213,11 +196,13 @@ def update(frame):
     point1.set_data([x1], [y1])
     point2.set_data([x2], [y2])
     point3.set_data([x3], [y3])
+
+    radius_line.set_data([(x3+x2)/2,x1], [(y3+y2)/2,y1])
     
     x_curve.append(x1)
     y_curve.append(y1)
     curve.set_data(x_curve, y_curve)
-    
+    print(f'frame: {frame}')
     return point1, point2, point3, side1, side2, side3, radius_line, curve
 
 ani = FuncAnimation(fig, update, frames=steps, init_func=init, interval=interval, blit=True)

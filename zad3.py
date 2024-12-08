@@ -5,10 +5,18 @@ from matplotlib.animation import FuncAnimation
 # Parametry
 a = 1  # Długość boku trójkąta równobocznego
 r = a*np.sqrt(3)/3  # Promień okręgu opisanego na trójkącie
-steps = 500  # Liczba kroków animacji
+steps = 100  # Liczba kroków animacji
 interval = 20  # Interwał między klatkami w ms
 total_time = steps * interval / 1000  # Całkowity czas animacji w sekundach
 first_point_x = -0.7
+rotation_point = 2  # Domyślnie zaczynamy od obrotu wokół punktu 2
+
+# Dodaj po innych zmiennych globalnych
+next_point_to_check = 1  # Kolejny punkt do sprawdzenia kolizji (1, 2 lub 3)
+fixed_point = None  # Przechowuje współrzędne punktu obrotu po kolizji
+
+# Zmień zmienną fixed_point na triangle_state
+triangle_state = None  # Przechowuje stan trójkąta w momencie kolizji (x1,y1,x2,y2,x3,y3)
 
 # Funkcja bazowa
 def f(x):
@@ -47,13 +55,13 @@ def init():
     
     point1.set_data([x1], [y1])
     point2.set_data([x2], [y2])
-    # point3.set_data([x3], [y3])
+    point3.set_data([x3], [y3])
     side1.set_data([x1, x2], [y1, y2])
     side2.set_data([x2, x3], [y2, y3])
     side3.set_data([x3, x1], [y3, y1])
     radius_line.set_data([], [])
     curve.set_data([], [])
-    return point1, side1, side2, side3, radius_line, curve, point2#, point3
+    return point1, point2, point3, side1, side2, side3, radius_line, curve
 
 def find_next_x(x1, y1, a, x_vals, y_vals):
     # Znajdujemy tylko punkty na prawo od x1
@@ -114,37 +122,94 @@ def rotate_point(x, y, cx, cy, angle):
     
     return rotated_x + cx, rotated_y + cy
 
+def find_closest_point_on_function(x, y, window=0.1):
+    # Szukamy najbliższego punktu w oknie wokół x
+    x_window = np.linspace(x - window, x + window, 1000)
+    y_window = f(x_window)
+    
+    # Obliczamy odległości do wszystkich punktów w oknie
+    distances = np.sqrt((x_window - x)**2 + (y_window - y)**2)
+    
+    # Znajdujemy indeks najbliższego punktu
+    closest_idx = np.argmin(distances)
+    return x_window[closest_idx], y_window[closest_idx], distances[closest_idx]
+
+def is_point_on_function(x, y, tolerance=0.03):
+    # Znajdujemy najbliższy punkt na funkcji i odległość do niego
+    _, closest_y, min_distance = find_closest_point_on_function(x, y)
+    
+    # Sprawdzamy czy punkt jest blisko funkcji i nad nią (y > closest_y)
+    is_above = y > closest_y
+    is_close = min_distance < tolerance
+    
+    print(f"Odległość od funkcji: {min_distance}, isSkok: {min_distance<tolerance}")
+    return is_close
+
+def check_collision_with_function(x1, y1, x2, y2, x3, y3):
+    global rotation_point
+    
+    # Sprawdzamy tylko jeden konkretny punkt w zależności od aktualnego punktu obrotu
+    if rotation_point == 2 and is_point_on_function(x3, y3):
+        print("Kolizja z punktem 3")
+        return 3
+    elif rotation_point == 3 and is_point_on_function(x1, y1):
+        print("Kolizja z punktem 1")
+        return 1
+    elif rotation_point == 1 and is_point_on_function(x2, y2):
+        print("Kolizja z punktem 2")
+        return 2
+    
+    return None
+
 def update(frame):
-    global first_point_x
+    global first_point_x, rotation_point, triangle_state
     if frame == 0:
         x_curve.clear()
         y_curve.clear()
+        rotation_point = 2
+        triangle_state = None
     
-    # Znajdujemy pierwotne położenie trójkąta
-    x1, y1, x2, y2, x3, y3 = find_triangle(first_point_x, a, x_vals, y_vals)
-    
-    # Obliczamy kąt obrotu (frame określa postęp animacji)
+    if triangle_state is None:
+        # Używamy pierwotnego położenia trójkąta
+        x1, y1, x2, y2, x3, y3 = find_triangle(first_point_x, a, x_vals, y_vals)
+    else:
+        # Używamy zapamiętanego stanu trójkąta
+        x1, y1, x2, y2, x3, y3 = triangle_state
+        
     angle = -(2 * np.pi * frame) / steps
     
-    # Obracamy punkty 1 i 3 wokół punktu 2
-    x1, y1 = rotate_point(x1, y1, x2, y2, angle)
-    x3, y3 = rotate_point(x3, y3, x2, y2, angle)
+    # Wykonujemy obrót wokół odpowiedniego punktu
+    if rotation_point == 1:
+        x2, y2 = rotate_point(x2, y2, x1, y1, angle)
+        x3, y3 = rotate_point(x3, y3, x1, y1, angle)
+    elif rotation_point == 2:
+        x1, y1 = rotate_point(x1, y1, x2, y2, angle)
+        x3, y3 = rotate_point(x3, y3, x2, y2, angle)
+    elif rotation_point == 3:
+        x1, y1 = rotate_point(x1, y1, x3, y3, angle)
+        x2, y2 = rotate_point(x2, y2, x3, y3, angle)
     
-    # Rysowanie linii między punktami
+    # Sprawdzamy kolizję i zapisujemy cały stan trójkąta
+    collision_point = check_collision_with_function(x1, y1, x2, y2, x3, y3)
+    if collision_point is not None and triangle_state is None:
+        rotation_point = collision_point
+        triangle_state = (x1, y1, x2, y2, x3, y3)
+    
+    # Reszta funkcji update pozostaje bez zmian...
+    
     side1.set_data([x1, x2], [y1, y2])
     side2.set_data([x2, x3], [y2, y3])
     side3.set_data([x3, x1], [y3, y1])
     
     point1.set_data([x1], [y1])
     point2.set_data([x2], [y2])
-    # point3.set_data([x3], [y3])
+    point3.set_data([x3], [y3])
     
     x_curve.append(x1)
     y_curve.append(y1)
     curve.set_data(x_curve, y_curve)
-    print(x1,x2)
     
-    return point1, side1, side2, side3, radius_line, curve , point2#, point3
+    return point1, point2, point3, side1, side2, side3, radius_line, curve
 
 ani = FuncAnimation(fig, update, frames=steps, init_func=init, interval=interval, blit=True)
 plt.show()

@@ -5,8 +5,8 @@ class Point:
     def __init__(self, x, y):
         self.x = x
         self.y = y
-        self.alpha = 90 #np.random.uniform(0, 360)  # kierunek w stopniach
-        self.beta = 90 #np.random.uniform(0, 90)    # kąt rozwarcia w stopniach
+        self.alpha = np.random.uniform(0, 360)  # kierunek w stopniach
+        self.beta = np.random.uniform(0, 90)    # kąt rozwarcia w stopniach
         self.a = np.random.uniform(0, 10)       # długość wektora
         self.b = 2                              # długość przeciwnego wektora
 
@@ -95,32 +95,21 @@ def plot_points_and_hull(points, hull):
         tail_end_y = point.y + dy_opposite
         plt.plot([point.x, tail_end_x], [point.y, tail_end_y], color='blue')
         
-        # Rysowanie poprawnego trójkąta prostokątnego w miejscu przeciwnym
-        left_angle = alpha_rad + np.pi + beta_rad/2
-        right_angle = alpha_rad + np.pi - beta_rad/2
-
-        # Obliczanie punktów końcowych ogona
-        tail_end_x = point.x + dx_opposite
-        tail_end_y = point.y + dy_opposite
-
-        # Punkty lewego i prawego ramienia
-        left_end_x = point.x + np.cos(left_angle) * point.b
-        left_end_y = point.y + np.sin(left_angle) * point.b
-
-        right_end_x = point.x + np.cos(right_angle) * point.b
-        right_end_y = point.y + np.sin(right_angle) * point.b
-
-        # Tworzenie poprawnego trójkąta prostokątnego
-        triangle_x = [point.x, left_end_x, right_end_x]
-        triangle_y = [point.y, left_end_y, right_end_y]
-
-        plt.fill(triangle_x, triangle_y, alpha=0.5, fc='blue', ec='black')
-
-
-    # Rysowanie trójkąta prostokątnego
-    triangle_x = [point.x, tail_end_x, right_end_x, left_end_x]
-    triangle_y = [point.y, tail_end_y, right_end_y, left_end_y]
-    plt.fill(triangle_x, triangle_y, alpha=0.2, fc='yellow', ec='orange')
+        # Obliczanie wektora prostopadłego do a
+        perpendicular_angle = alpha_rad + np.pi/2
+        perpendicular_length = point.a * np.tan(np.radians(point.beta/2))
+        
+        # Punkty końcowe prostopadłej
+        left_end_x = tail_end_x + np.cos(perpendicular_angle) * perpendicular_length
+        left_end_y = tail_end_y + np.sin(perpendicular_angle) * perpendicular_length
+        
+        right_end_x = tail_end_x - np.cos(perpendicular_angle) * perpendicular_length
+        right_end_y = tail_end_y - np.sin(perpendicular_angle) * perpendicular_length
+        
+        # Rysowanie trójkąta prostokątnego
+        triangle_x = [point.x, right_end_x, tail_end_x, left_end_x]
+        triangle_y = [point.y, right_end_y, tail_end_y, left_end_y]
+        plt.fill(triangle_x, triangle_y, alpha=0.2, fc='yellow', ec='orange')
 
     # Rysowanie otoczki wypukłej
     hull_with_closure = hull + [hull[0]]

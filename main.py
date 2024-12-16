@@ -60,12 +60,13 @@ def connected_components_stats(binary_image):
 
     num_labels = label + 1  # Liczba etykiet łącznie z tłem
     stats = np.array(stats)
-    return num_labels, labels, stats, None
+    return num_labels, stats
 
 def find_and_draw_differences(original_image_path, edited_image_path, output_path, largest_bbox_output, x):
     # Wczytanie obrazów przed rozmyciem
     original = cv2.imread(original_image_path)
     edited = cv2.imread(edited_image_path)
+    clean_edited = edited.copy()
 
     if original is None or edited is None:
         raise ValueError("Nie można wczytać jednego z obrazów. Sprawdź ścieżki.")
@@ -80,7 +81,7 @@ def find_and_draw_differences(original_image_path, edited_image_path, output_pat
     # Binarizacja różnic
     binary_diff = (difference > 40).astype(np.uint8) * 255
 
-    num_labels, labels, stats, _ = connected_components_stats(binary_diff)
+    num_labels, stats = connected_components_stats(binary_diff)
 
     # Rysowanie bounding boxów na niezmodyfikowanym obrazie
     largest_area = 0
@@ -89,6 +90,7 @@ def find_and_draw_differences(original_image_path, edited_image_path, output_pat
 
     for i in range(1, num_labels):  # Pomijamy tło (etykieta 0)
         x_coord, y_coord, w, h, area = stats[i]
+        print(f"Rozmiar bounding boxa: {area} pikseli")
         if area < x:
             continue  # Ignorujemy bounding boxy mniejsze niż x
         bounding_box_count += 1
@@ -98,14 +100,10 @@ def find_and_draw_differences(original_image_path, edited_image_path, output_pat
         cv2.rectangle(edited, (x_coord, y_coord), (x_coord + w, y_coord + h), (0, 0, 255), 2)  # Czerwony prostokąt
 
     print(f"Liczba wykrytych bounding boxów: {bounding_box_count}")
-
     # Wycięcie największego bounding boxa i zapisanie go z obrazu przed rozmyciem
     if largest_bbox is not None:
         x_coord, y_coord, w, h = largest_bbox
-        largest_bbox_image = edited[y_coord:y_coord+h, x_coord:x_coord+w]
-
-        # Wyodrębnienie odpowiadającego regionu z oryginalnego obrazu
-        largest_bbox_image_original = original[y_coord:y_coord+h, x_coord:x_coord+w]
+        largest_bbox_image = clean_edited[y_coord:y_coord+h, x_coord:x_coord+w]
 
         # Obliczenie różnicy między rozmytymi wersjami edytowanego a oryginalnego obrazu w wyciętym obszarze
         difference_bbox = np.abs(
@@ -133,6 +131,6 @@ def find_and_draw_differences(original_image_path, edited_image_path, output_pat
     # Zapisanie obrazu z zaznaczonymi bounding boxami
     cv2.imwrite(output_path, edited)    
     print(f"Obraz z zaznaczonymi bounding boxami zapisano jako {output_path}")
-
-# Przykład użycia z minimalnym obszarem x (np. x = 1000)
+    
+# Wywołanie funkcji
 find_and_draw_differences("org.jpg", "edited.jpg", "differences_output.png", "largest_bbox_output.png", x=100)

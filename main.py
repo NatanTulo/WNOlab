@@ -80,7 +80,6 @@ def find_and_draw_differences(original_image_path, edited_image_path, output_pat
     # Binarizacja różnic
     binary_diff = (difference > 40).astype(np.uint8) * 255
 
-    # Zamiana cv2.connectedComponentsWithStats na własną implementację
     num_labels, labels, stats, _ = connected_components_stats(binary_diff)
 
     # Rysowanie bounding boxów na niezmodyfikowanym obrazie
@@ -104,7 +103,31 @@ def find_and_draw_differences(original_image_path, edited_image_path, output_pat
     if largest_bbox is not None:
         x_coord, y_coord, w, h = largest_bbox
         largest_bbox_image = edited[y_coord:y_coord+h, x_coord:x_coord+w]
-        cv2.imwrite(largest_bbox_output, largest_bbox_image)
+
+        # Wyodrębnienie odpowiadającego regionu z oryginalnego obrazu
+        largest_bbox_image_original = original[y_coord:y_coord+h, x_coord:x_coord+w]
+
+        # Obliczenie różnicy między rozmytymi wersjami edytowanego a oryginalnego obrazu w wyciętym obszarze
+        difference_bbox = np.abs(
+            edited_blur[y_coord:y_coord+h, x_coord:x_coord+w].astype(int) - 
+            original_blur[y_coord:y_coord+h, x_coord:x_coord+w].astype(int)
+        ).sum(axis=2)
+
+        # Tworzenie maski binarnej na podstawie różnicy
+        mask = (difference_bbox > 40).astype(np.uint8)
+        mask = np.repeat(mask[:, :, np.newaxis], 3, axis=2)
+
+        # Usunięcie tła z largest_bbox_image
+        largest_bbox_image_no_bg = largest_bbox_image * mask
+
+        # Przekształcenie obrazu do formatu z kanałem alfa (RGBA)
+        largest_bbox_image_rgba = np.dstack((largest_bbox_image_no_bg, mask[:, :, 0] * 255))
+
+        # Ustawienie kanału alfa na 0 tam, gdzie maska wynosi 0
+        largest_bbox_image_rgba[:, :, 3] = mask[:, :, 0] * 255
+
+        # Zapisanie obrazu z przezroczystym tłem
+        cv2.imwrite(largest_bbox_output, largest_bbox_image_rgba)
         print(f"Największy bounding box zapisano jako {largest_bbox_output}")
 
     # Zapisanie obrazu z zaznaczonymi bounding boxami

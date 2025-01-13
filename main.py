@@ -5,6 +5,8 @@ import pandas as pd
 import os
 import numpy as np
 import ast
+from scipy.spatial.transform import Rotation
+from mpl_toolkits.mplot3d import Axes3D
 
 b = bagreader('data/d435i_walking.bag')
 
@@ -99,3 +101,64 @@ fig, ax = plt.subplots()
 ax.imshow(img_array)
 ax.set_title("Pseudorzut z góry (RGB) z color_df")
 plt.show()
+
+class PoseTracker:
+    def __init__(self, dt):
+        self.position = np.zeros(3)  # [x, y, z]
+        self.velocity = np.zeros(3)
+        self.orientation = np.eye(3)  # Macierz rotacji
+        self.dt = dt
+        
+    def update(self, angular_velocity, acceleration):
+        # Aktualizacja orientacji przez małe obroty
+        rotation = Rotation.from_rotvec((angular_velocity * self.dt))
+        self.orientation = rotation.apply(self.orientation)
+        
+        # Usunięcie grawitacji i przekształcenie przyspieszenia do układu globalnego
+        acceleration_global = self.orientation @ acceleration
+        acceleration_global[2] += 9.81  # Kompensacja grawitacji
+        
+        # Całkowanie przyspieszenia
+        self.velocity += acceleration_global * self.dt
+        self.position += self.velocity * self.dt
+        
+        return self.position
+
+# Przygotowanie danych
+gyro_data = gyro_df[['angular_velocity.x', 'angular_velocity.y', 'angular_velocity.z']].values
+accel_data = accel_df[['linear_acceleration.x', 'linear_acceleration.y', 'linear_acceleration.z']].values
+
+# Obliczenie dt (zakładając stałą częstotliwość próbkowania)
+gyro_times = gyro_df['Time'].values
+dt = np.mean(np.diff(gyro_times))
+
+# Śledzenie pozycji
+tracker = PoseTracker(dt)
+positions = []
+
+for i in range(len(gyro_data)):
+    if i < len(accel_data):  # Upewniamy się, że mamy dane z obu czujników
+        pos = tracker.update(gyro_data[i], accel_data[i])
+        positions.append(pos.copy())
+
+positions = np.array(positions)
+
+# Wizualizacja trajektorii 3D
+fig = plt.figure(figsize=(10, 10))
+ax = fig.add_subplot(111, projection='3d')
+ax.plot(positions[:, 0], positions[:, 1], positions[:, 2])
+ax.set_xlabel('X [m]')
+ax.set_ylabel('Y [m]')
+ax.set_zlabel('Z [m]')
+ax.set_title('Trajektoria kamery')
+
+# Dodanie punktu początkowego i końcowego
+ax.scatter(positions[0, 0], positions[0, 1], positions[0, 2], color='green', s=100, label='Start')
+ax.scatter(positions[-1, 0], positions[-1, 1], positions[-1, 2], color='red', s=100, label='End')
+ax.legend()
+
+plt.show()
+
+# Wyświetlenie podstawowych statystyk
+print(f"Całkowita przebyta odległość: {np.sum(np.sqrt(np.sum(np.diff(positions, axis=0)**2, axis=1))):.2f} m")
+print(f"Przemieszczenie (w linii prostej): {np.sqrt(np.sum((positions[-1] - positions[0])**2)):.2f} m")

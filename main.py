@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import os
 import numpy as np
+import ast
 
 b = bagreader('data/d435i_walking.bag')
 
@@ -74,3 +75,27 @@ if not os.path.isfile('data/d435i_walking/device_0-sensor_1-Color_0-image-data.c
 else:
     print("Dane z kamery kolorowej już istnieją.")
     color_df = pd.read_csv('data/d435i_walking/device_0-sensor_1-Color_0-image-data.csv')
+
+first = color_df.head(1)
+width = first['width'][0]
+height = first['height'][0]
+data = first['data'][0]
+
+# Convert string representation of bytes to actual bytes
+try:
+    # Try to evaluate the string as a literal
+    data_bytes = ast.literal_eval(data)
+    # Convert to bytes if it's a list of integers
+    if isinstance(data_bytes, list):
+        data_bytes = bytes(data_bytes)
+except:
+    # If the data is already in the correct format, use it directly
+    data_bytes = data.encode('latin-1')
+
+# Create the image array from bytes
+img_array = np.frombuffer(data_bytes, dtype=np.uint8).reshape((height, width, 3))
+
+fig, ax = plt.subplots()
+ax.imshow(img_array)
+ax.set_title("Pseudorzut z góry (RGB) z color_df")
+plt.show()

@@ -1,10 +1,10 @@
 import transformers
 import torch
-from tqdm import tqdm
 from datasets import Dataset
 import time
 from typing import List
 import matplotlib.pyplot as plt
+from collections import Counter
 
 model_id = "meta-llama/Meta-Llama-3.1-8B-Instruct"
 
@@ -24,62 +24,65 @@ def generate_text(example):
     print(output)
     return {"text": output}
 
-def process_and_save(lines: List[str], chunk_size: int) -> tuple[float, str]:
+def process_and_save(lines: List[str]) -> float:
     start_time = time.time()
-    chunked_lines = [lines[i:i + chunk_size] for i in range(0, len(lines), chunk_size)]
-    dataset = Dataset.from_dict({"lines": chunked_lines})
+    dataset = Dataset.from_dict({"lines": [lines]})
     
     processed = dataset.map(
         generate_text,
         batched=False,
         load_from_cache_file=False,
         keep_in_memory=True,
-        new_fingerprint=f"benchmark_chunk_{chunk_size}"
+        new_fingerprint="benchmark_all"
     )
     
-    # Save results to a chunk-specific file
-    output_filename = f"opisy_blip_output_chunk{chunk_size}.txt"
-    with open(output_filename, "w", encoding="utf-8") as out:
+    with open("opisy_blip_output.txt", "w", encoding="utf-8") as out:
         for output_text in processed["text"]:
             out.write(output_text + "\n")
             out.flush()
     
     end_time = time.time()
-    return end_time - start_time, output_filename
+    return end_time - start_time
 
-# Read the file
 with open("./opisy_blip.txt", "r", encoding="utf-8") as f:
     lines = f.readlines()
 
-# Test different chunk sizes
-chunk_sizes = [26,52,104]  # Divisors or near-divisors of 104
-results = {}
-output_files = {}
+execution_time = process_and_save(lines)
+print(f"Przetworzono {len(lines)} opisów w {execution_time:.2f} sekund")
 
-for size in chunk_sizes:
-    print(f"Testing chunk size: {size}")
-    execution_time, output_file = process_and_save(lines, size)
-    results[size] = execution_time
-    output_files[size] = output_file
-    print(f"Time taken: {execution_time:.2f} seconds")
-    print(f"Results saved to: {output_file}")
+############################################################################################################
+# plot
+############################################################################################################
 
-# Save benchmark summary
-with open("benchmark_summary.txt", "w", encoding="utf-8") as f:
-    f.write("Benchmark Results:\n")
-    f.write("================\n")
-    for size in chunk_sizes:
-        f.write(f"Chunk size: {size}\n")
-        f.write(f"Time: {results[size]:.2f} seconds\n")
-        f.write(f"Output file: {output_files[size]}\n")
-        f.write("----------------\n")
+# Read and parse the data
+categories = []
+file_data = []  # Lista do przechowywania nazw plików i kategorii
+with open('opisy_blip_output.txt', 'r') as file:
+    for line in file:
+        parts = line.split('-')
+        if len(parts) < 2:
+            continue
+        filename = parts[0].strip()
+        category = parts[1].strip()
+        categories.append(category)
+        file_data.append((filename, category))
 
-# Plot results
-plt.figure(figsize=(10, 6))
-plt.plot(list(results.keys()), list(results.values()), marker='o')
-plt.title('Execution Time vs Chunk Size')
-plt.xlabel('Chunk Size')
-plt.ylabel('Time (seconds)')
-plt.grid(True)
-plt.savefig('benchmark_results.png')
+# Count occurrences of each category
+category_counts = Counter(categories)
+# Sort the counter items in descending order
+sorted_categories = dict(sorted(category_counts.items(), key=lambda x: x[1], reverse=True))
+
+# Print filenames for categories with only one image
+for filename, category in file_data:
+    if category_counts.get(category, 0) == 1:
+        print(f"{filename} (only {category})")
+
+plt.figure(figsize=(15, 8))  # Zwiększony rozmiar figury
+plt.bar(sorted_categories.keys(), sorted_categories.values(), color='coral')
+plt.xlabel('Klasy')
+plt.ylabel('Liczba obrazów')
+plt.title('Liczba obrazów dla każdej najczęstszej klasy')
+plt.xticks(rotation=90, fontsize=10)  # Zmniejszony rozmiar czcionki etykiet
+plt.tight_layout()
+plt.savefig('top_class_counts.png', dpi=300)  # Zapisanie wykresu z wyższą rozdzielczością
 plt.show()

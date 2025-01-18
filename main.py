@@ -2,6 +2,8 @@
 import datetime
 import os
 import time
+import sys
+import signal
 from collections import Counter
 from typing import List
 
@@ -23,9 +25,16 @@ output_file = "./opisy_blip.txt"
 
 # Inicjalizacja logowania z nazwą pliku zawierającą datę rozpoczęcia
 start_datetime = datetime.datetime.now()
-log_file_name = f"log_{start_datetime.strftime('%Y-%m-%d_%H-%M-%S')}.txt"
+timestamp_for_files = start_datetime.strftime('%Y-%m-%d_%H-%M-%S')
+log_file_name = f"log_{timestamp_for_files}.txt"
 
-with open(log_file_name, "w", encoding="utf-8") as log_f:
+def handle_sigint(signum, frame):
+    print("Program interrupted by user (Ctrl+C).")
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, handle_sigint)
+
+with open(f"wyniki/{log_file_name}", "w", encoding="utf-8") as log_f:
     log_f.write(f"Program rozpoczęty: {start_datetime.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
 
     # Generowanie opisów obrazów i zapis do pliku
@@ -57,7 +66,8 @@ with open(log_file_name, "w", encoding="utf-8") as log_f:
     # Definicja funkcji generującej tekst na podstawie opisów
     def generate_text(example):
         messages = [
-            {"role": "system", "content": "You are given data in form <filename>: <description>, you have to answer in form <filename> - <category>. Pictures are from a few datasets and you have to provide the main theme that could be the name of the dataset. Don't give any slashes, stick to one category for each picture. Categories should be as general as possible."},
+            {"role": "system", "content": "You are given data in form <filename>: <description>, you have to answer in form <filename> - <category>. Pictures are from a few datasets and you have to provide the main theme that could be the name of the dataset. Don't give any slashes, stick to one category for each picture. "},
+            #Categories should be as general as possible
             {"role": "user", "content": "".join(example["lines"])},
         ]
         output = pipeline(messages, max_new_tokens=2048)[0]["generated_text"][2]["content"]
@@ -80,7 +90,6 @@ with open(log_file_name, "w", encoding="utf-8") as log_f:
         with open("opisy_blip_output.txt", "w", encoding="utf-8") as out:
             for output_text in processed["text"]:
                 out.write(output_text + "\n")
-                out.flush()
         
         end_time = time.time()
         return end_time - start_time
@@ -126,19 +135,21 @@ with open(log_file_name, "w", encoding="utf-8") as log_f:
             
             # Dodanie systemu liczenia punktów
             special_images = {"wno_04.jpg", "wno_06.jpg", "wno_08.jpg", "wno_09.jpg", "wno_87.jpg", "wno_88.jpg", "wno_15.jpeg", "wno_89.jpg"}
-            points = 0.0
+            plus_points = 0.0
+            minus_points = 0.0
             allowed_incorrect = 1
             for outlier in outliers:
                 filename = outlier.split()[0]
                 if filename in special_images:
-                    points += 0.5
+                    plus_points += 0.5
                 else:
                     if allowed_incorrect > 0:
                         allowed_incorrect -= 1
                     else:
-                        points -= 0.5
-            total_points = points + 1
-            outliers_file.write(f"{points} +1 = {total_points}\n\n\n")
+                        minus_points += 0.5
+            total_points = plus_points - minus_points + 1
+            outliers_file.write(f"{plus_points} - {minus_points} + 1 = {total_points}\n\n\n")
+            print(f"{plus_points} - {minus_points} + 1 = {total_points}")
         log_f.write(f"Outliers wykryte: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
         with open('outliers.txt', 'r', encoding='utf-8') as f:
             outliers_content = f.read()
@@ -153,10 +164,10 @@ with open(log_file_name, "w", encoding="utf-8") as log_f:
     plt.xticks(rotation=90, fontsize=10)
     plt.tight_layout()
     
-    # Dodanie daty i czasu do nazwy pliku wykresu
-    plot_file_name = f"top_class_counts_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.png"
-    plt.savefig(plot_file_name, dpi=300)  # Zapisanie wykresu z unikalną nazwą
-    plt.show()
+    # Użycie wspólnego znacznika czasowego dla nazwy pliku wykresu
+    plot_file_name = f"wyniki/top_class_counts_{timestamp_for_files}.png"
+    plt.savefig(plot_file_name, dpi=300)
+    # plt.show()
 
     # Zapis końcowego czasu i całkowitego czasu wykonania
     end_datetime = datetime.datetime.now()

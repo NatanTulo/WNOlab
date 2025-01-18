@@ -17,7 +17,7 @@ from tqdm import tqdm
 from transformers import BlipForConditionalGeneration, BlipProcessor, pipeline
 
 # Dodanie zmiennej wyboru API
-api_choice = "google"  # Możliwe wartości: "llama", "google"
+api_choice = "llama"  # Możliwe wartości: "llama", "google"
 
 # Inicjalizacja modelu Google AI
 genai.configure(api_key="TOKEN")  # Dodaj swój klucz API
@@ -96,7 +96,7 @@ with open(f"wyniki/{log_file_name}", "w", encoding="utf-8") as log_f:
         if api_choice != "llama":
             raise RuntimeError("Pipeline nie został zainicjalizowany. Ustaw api_choice na 'llama'.")
         messages = [
-            {"role": "system", "content": "You are given data in form <filename>: <description>, you have to answer in form <filename> - <category>. Split images to about 8 datasets and provide the main theme that could be the name of the dataset. Don't give any slashes, stick to one category for each picture."},
+            {"role": "system", "content": "You analyze image descriptions in the format filename: description. Identify outliers—singular images that do not match the main dataset themes. Return filename - category, inferring the category from the description. Keep responses concise."},
             {"role": "user", "content": "".join(example["lines"])},
         ]
         output = llm_pipeline(messages, max_new_tokens=2048)[0]["generated_text"][2]["content"]
@@ -106,7 +106,7 @@ with open(f"wyniki/{log_file_name}", "w", encoding="utf-8") as log_f:
     # Definicja funkcji generującej tekst za pomocą Google API
     def generate_text_google(example):
         messages = [
-            {"role": "system", "content": "You are given data in form <filename>: <description>, you have to answer in form <filename> - <category>. Pictures are from a few datasets and you have to provide the main theme that could be the name of the dataset. Don't give any slashes, stick to one category for each picture."},
+            {"role": "system", "content": "You analyze image descriptions in the format filename: description. Identify outliers—singular images that do not match the main dataset themes. Return filename - category, inferring the category from the description. Keep responses concise."},
             {"role": "user", "content": "".join(example["lines"])},
         ]
         resp = google_model.generate_content([messages[0]["content"], messages[1]["content"]])
@@ -175,14 +175,12 @@ with open(f"wyniki/{log_file_name}", "w", encoding="utf-8") as log_f:
         if file_name.lower().endswith((".jpg", ".jpeg", ".png")):
             is_gray = is_grayscale(os.path.join(folder_path, file_name))
             color_status_map[file_name] = "grayscale" if is_gray else "color"
-            # print(f"{file_name}: {color_status_map[file_name]}")
 
     updated_file_data = []
     for (filename, category) in file_data:
         color_status = color_status_map.get(filename, "color")
         updated_file_data.append((filename, category, color_status))
     file_data = updated_file_data
-    #categories += [cd[2] for cd in file_data]
 
     # Liczenie wystąpień każdej kategorii i sortowanie
     category_counts = Counter(categories)
@@ -221,34 +219,25 @@ with open(f"wyniki/{log_file_name}", "w", encoding="utf-8") as log_f:
             plus_points = 0.0
             minus_points = 0.0
             allowed_incorrect = 1
-            grayscale_outlier_detected = False  # Dodano flagę dla grayscale outlier
-            color_outlier_detected = False      # Dodano flagę dla color outlier
             
             for outlier in outliers:
                 filename = outlier.split()[0]
-                if "grayscale" in outlier:
-                    grayscale_outlier_detected = True  # Ustaw flagę, jeśli grayscale outlier
-                if "color" in outlier:
-                    color_outlier_detected = True      # Ustaw flagę, jeśli color outlier
                 if filename in special_images:
                     plus_points += 0.5
+                    print(f"Dodano +0.5 punktu za specjalny obraz: {filename}. plus_points = {plus_points}")
                 else:
                     if allowed_incorrect > 0:
                         allowed_incorrect -= 1
+                        print(f"Zmniejszono allowed_incorrect do {allowed_incorrect}")
                     else:
                         minus_points += 0.5
-                
+                        print(f"Dodano -0.5 punktu za nieakceptowany obraz: {filename}. minus_points = {minus_points}")
                 outliers_file.write(f"{outlier}\n")
                 print(outlier)
             
-            # Przenieś podliczenie punktów tutaj, po przetworzeniu wszystkich outlierów
-            if grayscale_outlier_detected:
-                plus_points += 0.5  # Dodaj dodatkowe pół punktu za grayscale outlier
-            if color_outlier_detected:
-                plus_points += 0.5  # Dodaj dodatkowe pół punktu za color outlier
             total_points = plus_points - minus_points + 1
+            print(f"Suma punktów: {plus_points} - {minus_points} + 1 = {total_points}")
             outliers_file.write(f"{plus_points} - {minus_points} + 1 = {total_points}\n\n\n")
-            print(f"{plus_points} - {minus_points} + 1 = {total_points}")
         
         log_f.write(f"Outliers wykryte: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
         for outlier_info in outliers:

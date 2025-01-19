@@ -25,7 +25,8 @@ google_model = genai.GenerativeModel("gemini-1.5-flash")
 
 # Definicja ścieżek do folderu z obrazami i pliku wyjściowego
 folder_path = "./Final_images_dataset"
-output_file = "./opisy_blip.txt"
+desc_file = "./opisy_blip.txt"
+output_file = "./kategorie.txt"
 
 # Inicjalizacja logowania z nazwą pliku zawierającą datę rozpoczęcia
 start_datetime = datetime.datetime.now()
@@ -50,7 +51,7 @@ with open(f"wyniki/{log_file_name}", "w", encoding="utf-8") as log_f:
     log_f.write(f"Program rozpoczęty: {start_datetime.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
     
     # Dodanie zmiennej wyboru regeneracji opisów
-    regen_descriptions = not os.path.exists(output_file)  # Generuj tylko jeśli plik nie istnieje
+    regen_descriptions = not os.path.exists(desc_file)  # Generuj tylko jeśli plik nie istnieje
 
     if regen_descriptions:
         # Inicjalizacja procesora i modelu BLIP
@@ -58,7 +59,7 @@ with open(f"wyniki/{log_file_name}", "w", encoding="utf-8") as log_f:
         blip_model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-large").to("cuda")
         
         # Generowanie opisów obrazów i zapis do pliku
-        with open(output_file, "w", encoding="utf-8") as f:
+        with open(desc_file, "w", encoding="utf-8") as f:
             for file_name in tqdm(os.listdir(folder_path)):
                 if file_name.lower().endswith((".jpg", ".jpeg", ".png")):
                     image_path = os.path.join(folder_path, file_name)
@@ -73,11 +74,11 @@ with open(f"wyniki/{log_file_name}", "w", encoding="utf-8") as log_f:
         log_f.write(f"Użyto istniejące opisy: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
     
     if regen_descriptions:
-        with open(output_file, "r", encoding="utf-8") as f:
+        with open(desc_file, "r", encoding="utf-8") as f:
             descriptions = f.read()
         log_f.write(descriptions + "\n\n")
     else:
-        with open(output_file, "r", encoding="utf-8") as f:
+        with open(desc_file, "r", encoding="utf-8") as f:
             descriptions = f.read()
         log_f.write(descriptions + "\n\n")
 
@@ -96,7 +97,7 @@ with open(f"wyniki/{log_file_name}", "w", encoding="utf-8") as log_f:
         if api_choice != "llama":
             raise RuntimeError("Pipeline nie został zainicjalizowany. Ustaw api_choice na 'llama'.")
         messages = [
-            {"role": "system", "content": "You analyze image descriptions in the format <filename>: <description>. Identify outliers—singular images that do not match the main dataset themes. Answer in form <filename> - <category>, inferring the category from the description. Keep responses concise. Answer mustn't start with any punctuation. Category should be only one word and be general."},
+            {"role": "system", "content": "You are given data in form <filename>: <description>, you have to answer in form <filename> - <category>. Pictures are from a few datasets and you have to provide the main theme that could be the name of the dataset. Don't give any slashes, stick to one category for each picture."},
             {"role": "user", "content": "".join(example["lines"])},
         ]
         output = llm_pipeline(messages, max_new_tokens=2048)[0]["generated_text"][2]["content"]
@@ -138,7 +139,7 @@ with open(f"wyniki/{log_file_name}", "w", encoding="utf-8") as log_f:
         else:
             raise ValueError("Nieprawidłowy wybór API. Użyj 'llama' lub 'google'.")
         
-        with open("opisy_output.txt", "w", encoding="utf-8") as out:
+        with open(output_file, "w", encoding="utf-8") as out:
             for output_text in processed["text"]:
                 out.write(output_text + "\n")
         
@@ -146,21 +147,21 @@ with open(f"wyniki/{log_file_name}", "w", encoding="utf-8") as log_f:
         return end_time - start_time
 
     # Odczyt wygenerowanych opisów z pliku
-    with open("./opisy_blip.txt", "r", encoding="utf-8") as f:
+    with open(desc_file, "r", encoding="utf-8") as f:
         lines = f.readlines()
 
     # Przetwarzanie opisów i pomiar czasu wykonania
     execution_time = process_and_save(lines)
     print(f"Przetworzono {len(lines)} opisów w {execution_time:.2f} sekund")
     log_f.write(f"Opisy przetworzone: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-    with open("opisy_output.txt", "r", encoding="utf-8") as f:
+    with open(output_file, "r", encoding="utf-8") as f:
         categories = f.read()
     log_f.write(categories + "\n\n")
 
     # Analiza kategorii i wykrywanie odstających
     categories = []
     file_data = []
-    with open('opisy_output.txt', 'r') as file:
+    with open(output_file, 'r') as file:
         for line in file:
             parts = line.split('-')
             if len(parts) < 2:

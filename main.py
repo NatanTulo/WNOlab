@@ -96,7 +96,7 @@ with open(f"wyniki/{log_file_name}", "w", encoding="utf-8") as log_f:
         if api_choice != "llama":
             raise RuntimeError("Pipeline nie został zainicjalizowany. Ustaw api_choice na 'llama'.")
         messages = [
-            {"role": "system", "content": "You analyze image descriptions in the format filename: description. Identify outliers—singular images that do not match the main dataset themes. Return filename - category, inferring the category from the description. Keep responses concise."},
+            {"role": "system", "content": "You analyze image descriptions in the format <filename>: <description>. Identify outliers—singular images that do not match the main dataset themes. Answer in form <filename> - <category>, inferring the category from the description. Keep responses concise. Answer mustn't start with any punctuation. Category should be only one word and be general."},
             {"role": "user", "content": "".join(example["lines"])},
         ]
         output = llm_pipeline(messages, max_new_tokens=2048)[0]["generated_text"][2]["content"]

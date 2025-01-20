@@ -8,7 +8,10 @@ import ast
 from scipy.spatial.transform import Rotation
 from mpl_toolkits.mplot3d import Axes3D
 import cv2
-from tqdm import tqdm
+from sklearn.neighbors import NearestNeighbors
+from scipy.spatial.transform import Rotation as R
+import g2o
+from tqdm import tqdm  # Dodano import tqdm
 
 b = bagreader('data/d435i_walking.bag')
 
@@ -99,11 +102,6 @@ except:
 # Create the image array from bytes
 img_array = np.frombuffer(data_bytes, dtype=np.uint8).reshape((height, width, 3))
 
-# fig, ax = plt.subplots()
-# ax.imshow(img_array)
-# ax.set_title("Widok pierwszej klatki")
-# plt.show()
-
 # Przed przetwarzaniem danych, dodajemy kalibrację i filtrację
 def calibrate_imu(accel_data, gyro_data, static_duration=100):
     # Używamy pierwszych n próbek do kalibracji
@@ -161,6 +159,64 @@ class PoseTracker:
         
         return self.position
 
+class SLAMProcessor:
+    def __init__(self):
+        self.global_map = np.zeros((0, 3))  # 3D points in global map
+        self.global_colors = np.zeros((0, 3))  # Colors for points
+        self.poses = []  # Camera poses
+        self.keyframes = []  # Selected keyframes
+        self.loop_candidates = []
+        
+    def icp_registration(self, source, target, max_iterations=50, tolerance=1e-8):
+        if len(source) < 3 or len(target) < 3:
+            return np.eye(4), False
+            
+        # Initialize nearest neighbor search
+        neigh = NearestNeighbors(n_neighbors=1)
+        neigh.fit(target)
+        
+        # Initial transformation
+        T = np.eye(4)
+        
+        for iteration in range(max_iterations):
+            # Find nearest neighbors
+            distances, indices = neigh.kneighbors(source)
+            
+            # Compute centroids
+            source_centroid = np.mean(source, axis=0)
+            target_centroid = np.mean(target[indices[:, 0]], axis=0)
+            
+            # Center point clouds
+            source_centered = source - source_centroid
+            target_centered = target[indices[:, 0]] - target_centroid
+            
+            # Compute optimal rotation
+            H = source_centered.T @ target_centered
+            U, S, Vt = np.linalg.svd(H)
+            R = Vt.T @ U.T
+            
+            # Ensure right-handed coordinate system
+            if np.linalg.det(R) < 0:
+                Vt[-1, :] *= -1
+                R = Vt.T @ U.T
+            
+            # Compute translation
+            t = target_centroid - R @ source_centroid
+            
+            # Update transformation
+            T_current = np.eye(4)
+            T_current[:3, :3] = R
+            T_current[:3, 3] = t
+            
+            # Update source points
+            source = (R @ source.T).T + t
+            
+            # Check convergence
+            if np.mean(distances) < tolerance:
+                break
+                
+        return T_current, True
+
 class TopDownViewProcessor:
     def __init__(self, width, height):
         # D435i typical intrinsics
@@ -171,31 +227,32 @@ class TopDownViewProcessor:
         self.cx = width / 2
         self.cy = height / 2
         
-        # Modified view parameters
-        self.top_down_size = 1000  # Increased size
+        # Modified parameters for better visibility
+        self.top_down_size = 1200  # Increased size
         self.scale = 200  # Reduced scale to see more area
         self.top_down_view = np.zeros((self.top_down_size, self.top_down_size, 3), dtype=np.uint8)
+        self.confidence_map = np.zeros((self.top_down_size, self.top_down_size), dtype=np.float32)
         
-        # Initialize view center to None - will be set based on first data
-        self.center_x = None
-        self.center_y = None
-        
-        # Track data bounds
-        self.min_x = float('inf')
-        self.max_x = float('-inf')
-        self.min_z = float('inf')
-        self.max_z = float('-inf')
-        
-        # Other parameters
+        # Adjusted parameters
         self.min_depth = 0.3
         self.max_depth = 5.0  # Increased max depth
-        self.accumulation_count = np.zeros((self.top_down_size, self.top_down_size), dtype=np.float32)
-
+        
+        # Center position more to the right to show all data
+        self.center_x = int(self.top_down_size * 0.5)  # Center horizontally
+        self.center_y = int(self.top_down_size * 0.25)   # Move center up to show more of the scene
+        self.slam = SLAMProcessor()
+        self.previous_points = None
+        self.previous_colors = None
+        self.cumulative_transform = np.eye(4)
+        
     def process_frame(self, color_frame, depth_frame, orientation):
+        # Don't decay previous view - remove that line
+        
         # Convert depth to meters
         depth_meters = depth_frame.astype(float) / 1000.0
         valid_depth = (depth_meters > self.min_depth) & (depth_meters < self.max_depth)
         
+        # Generate point cloud
         rows, cols = depth_frame.shape
         pixel_coords = np.mgrid[0:rows, 0:cols].reshape(2, -1)
         z = depth_meters.reshape(-1)
@@ -203,70 +260,117 @@ class TopDownViewProcessor:
         x = (pixel_coords[1] - self.cx) * z / self.fx
         y = (pixel_coords[0] - self.cy) * z / self.fy
         
+        # Transform points using IMU orientation
         points = np.vstack((x, y, z))
         points = orientation.apply(points.T).T
         
         valid_points = valid_depth.reshape(-1) & ~np.isnan(points[2])
-        x_proj = points[0][valid_points]  # Forward direction
-        z_proj = points[2][valid_points]  # Right direction
+        x_proj = points[0][valid_points]
+        z_proj = points[2][valid_points]
         y_proj = points[1][valid_points]
         
-        # Update data bounds
-        if len(x_proj) > 0:
-            self.min_x = min(self.min_x, x_proj.min())
-            self.max_x = max(self.max_x, x_proj.max())
-            self.min_z = min(self.min_z, z_proj.min())
-            self.max_z = max(self.max_z, z_proj.max())
-            
-            # Set initial center if not set
-            if self.center_x is None:
-                self.center_x = self.top_down_size // 2
-                self.center_y = self.top_down_size // 2
-            
-            # Update center to follow the data
-            target_x = (self.min_z + self.max_z) / 2
-            target_y = -(self.min_x + self.max_x) / 2
-            
-            self.center_x = int(self.top_down_size // 2 - target_x * self.scale)
-            self.center_y = int(self.top_down_size // 2 - target_y * self.scale)
-        
-        # Height filtering
-        height_valid = (y_proj > -1.0) & (y_proj < 1.0)  # Increased height range
+        # Tighter height filtering
+        height_valid = (y_proj > -0.3) & (y_proj < 0.3)
         x_proj = x_proj[height_valid]
         z_proj = z_proj[height_valid]
+        y_proj = y_proj[height_valid]  # Dodano filtrowanie y_proj
+        colors = color_frame.reshape(-1, 3)[valid_points][height_valid]  # Dodano filtrowanie colors
         
-        colors = color_frame.reshape(-1, 3)[valid_points][height_valid]
-        
-        # Convert to pixel coordinates with updated center
-        pixel_x = (z_proj * self.scale + self.center_x).astype(int)
-        pixel_z = (-x_proj * self.scale + self.center_y).astype(int)
+        # Convert to image coordinates with proper orientation
+        pixel_x = (-z_proj * self.scale + self.center_x).astype(int)  # Forward/backward
+        pixel_z = (-x_proj * self.scale + self.center_y).astype(int)   # Left/right
         
         valid = (pixel_x >= 0) & (pixel_x < self.top_down_size) & \
                 (pixel_z >= 0) & (pixel_z < self.top_down_size)
         
-        # Create frame view with averaging
+        # Create frame view with confidence-based weighting
         frame_view = np.zeros_like(self.top_down_view, dtype=np.float32)
-        accumulation = np.zeros((self.top_down_size, self.top_down_size), dtype=np.float32)
+        new_confidence = np.zeros_like(self.confidence_map)
         
         valid_pixels_z = pixel_z[valid]
         valid_pixels_x = pixel_x[valid]
         valid_colors = colors[valid]
         
-        # Update pixels with weighted averaging
-        np.add.at(frame_view, (valid_pixels_z, valid_pixels_x), valid_colors)
-        np.add.at(accumulation, (valid_pixels_z, valid_pixels_x), 1)
+        # Calculate confidence based on depth
+        confidences = 1.0 / (z_proj[valid] + 0.1)
+        confidences = confidences / np.max(confidences)  # Normalize confidences
         
-        # Normalize by accumulation count
-        mask = accumulation > 0
-        frame_view[mask] = frame_view[mask] / accumulation[mask, np.newaxis]
+        # Update pixels with confidence-based weights
+        np.add.at(frame_view, (valid_pixels_z, valid_pixels_x), 
+                 valid_colors * confidences[:, np.newaxis])
+        np.add.at(new_confidence, (valid_pixels_z, valid_pixels_x), confidences)
         
-        # Blend with existing view using weighted average
-        self.accumulation_count += accumulation
-        mask = self.accumulation_count > 0
-        self.top_down_view[mask] = ((self.top_down_view[mask].astype(np.float32) * 
-                                   (self.accumulation_count[mask, np.newaxis] - accumulation[mask, np.newaxis]) + 
-                                   frame_view[mask] * accumulation[mask, np.newaxis]) / 
-                                   self.accumulation_count[mask, np.newaxis]).astype(np.uint8)
+        # Blend with existing view based on confidence
+        mask = new_confidence > 0
+        combined_confidence = np.maximum(self.confidence_map, new_confidence)
+        
+        # Where we have new data, blend based on relative confidence
+        update_mask = mask & (self.confidence_map > 0)
+        if np.any(update_mask):
+            alpha = new_confidence[update_mask] / combined_confidence[update_mask]
+            self.top_down_view[update_mask] = (
+                (1 - alpha[:, np.newaxis]) * self.top_down_view[update_mask] +
+                alpha[:, np.newaxis] * frame_view[update_mask] / 
+                new_confidence[update_mask, np.newaxis]
+            ).astype(np.uint8)
+        
+        # Where we only have new data, just add it
+        new_only_mask = mask & (self.confidence_map == 0)
+        if np.any(new_only_mask):
+            self.top_down_view[new_only_mask] = (
+                frame_view[new_only_mask] / new_confidence[new_only_mask, np.newaxis]
+            ).astype(np.uint8)
+        
+        # Update confidence map
+        self.confidence_map = combined_confidence
+        
+        # Create current frame point cloud
+        valid_points = np.vstack((x_proj, y_proj, z_proj)).T
+        current_colors = colors
+        
+        # Perform ICP if we have previous points
+        if self.previous_points is not None:
+            T, success = self.slam.icp_registration(valid_points, self.previous_points)
+            if success:
+                self.cumulative_transform = T @ self.cumulative_transform
+                
+                # Transform current points to global frame
+                valid_points = (self.cumulative_transform[:3, :3] @ valid_points.T).T + self.cumulative_transform[:3, 3]
+                
+                # Add to global map with downsampling
+                if len(self.slam.global_map) == 0:
+                    self.slam.global_map = valid_points
+                    self.slam.global_colors = current_colors
+                else:
+                    # Downsample and merge
+                    merged_points = np.vstack((self.slam.global_map, valid_points))
+                    merged_colors = np.vstack((self.slam.global_colors, current_colors))
+                    
+                    # Simple voxel grid downsampling
+                    voxel_size = 0.05  # 5cm voxels
+                    voxel_indices = np.floor(merged_points / voxel_size)
+                    unique_indices, unique_idx = np.unique(voxel_indices, axis=0, return_index=True)
+                    
+                    self.slam.global_map = merged_points[unique_idx]
+                    self.slam.global_colors = merged_colors[unique_idx]
+        
+        # Update previous points
+        self.previous_points = valid_points
+        self.previous_colors = current_colors
+        
+        # Project global map to top-down view
+        if len(self.slam.global_map) > 0:
+            global_x = self.slam.global_map[:, 0]
+            global_z = self.slam.global_map[:, 2]
+            
+            pixel_x = (-global_z * self.scale + self.center_x).astype(int)
+            pixel_z = (-global_x * self.scale + self.center_y).astype(int)
+            
+            valid = (pixel_x >= 0) & (pixel_x < self.top_down_size) & \
+                    (pixel_z >= 0) & (pixel_z < self.top_down_size)
+            
+            # Update top-down view with global map
+            self.top_down_view[pixel_z[valid], pixel_x[valid]] = self.slam.global_colors[valid]
         
         return self.top_down_view
 
@@ -304,7 +408,8 @@ processor = TopDownViewProcessor(width=width, height=height)
 cumulative_rotation = Rotation.from_euler('xyz', [0, 0, 0])
 top_down_views = []
 
-for i in tqdm(range(len(depth_df)), desc="Processing frames"):
+# Procesowanie każdej klatki z paskiem postępu
+for i in tqdm(range(len(depth_df)), desc="Przetwarzanie klatek"):
     if i >= len(color_df) or i >= len(gyro_df):
         break
         
@@ -348,63 +453,56 @@ for i in tqdm(range(len(depth_df)), desc="Processing frames"):
 # After processing frames, modify the final view processing
 final_view = top_down_views[-1]
 
-# Crop the view to the region with data
+# Find non-zero regions with larger padding
 nonzero_coords = np.nonzero(np.any(final_view > 0, axis=2))
 if len(nonzero_coords[0]) > 0:
     min_row, max_row = np.min(nonzero_coords[0]), np.max(nonzero_coords[0])
     min_col, max_col = np.min(nonzero_coords[1]), np.max(nonzero_coords[1])
     
-    # Add padding
-    padding = 50
+    # Add padding proportional to the view size
+    padding = int(final_view.shape[0] * 0.1)  # 10% padding
     min_row = max(0, min_row - padding)
-    max_row = min(final_view.shape[0], max_row + padding)
+    max_row = min(final_view.shape[0], max_row + padding * 3)  # More padding below
     min_col = max(0, min_col - padding)
     max_col = min(final_view.shape[1], max_col + padding)
     
     final_view = final_view[min_row:max_row, min_col:max_col]
 
-# Enhance the image
-final_view = cv2.GaussianBlur(final_view, (3, 3), 0)
-final_view = cv2.convertScaleAbs(final_view, alpha=1.5, beta=10)
+# Adjusted image enhancement
+final_view = cv2.GaussianBlur(final_view, (5, 5), 0)  # Increased blur radius
+final_view = cv2.convertScaleAbs(final_view, alpha=1.5, beta=0)  # Adjusted contrast, removed brightness boost
+# Apply CLAHE (Contrast Limited Adaptive Histogram Equalization) for better detail visibility
+lab = cv2.cvtColor(final_view, cv2.COLOR_RGB2LAB)
+clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+lab[...,0] = clahe.apply(lab[...,0])
+final_view = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
 
-# Display with adjusted figure size
+final_view = cv2.rotate(final_view, cv2.ROTATE_90_CLOCKWISE)  # Rotate 90 degrees right
+
+# Display with adjusted figure size and labels
 plt.figure(figsize=(15, 15))
 plt.imshow(final_view)
-plt.title('Final Top-Down View (Forward Direction ↑)')
+plt.title('Top-Down View of Environment')
+plt.xlabel('← Left    Right →')
+plt.ylabel('Forward →')
 plt.axis('equal')
 
-# Update video writer without rotation
+# Add grid for better spatial reference
+plt.grid(True, alpha=0.3)
+
+# Update video writer with rotation
 fourcc = cv2.VideoWriter_fourcc(*'mp4v')
 out = cv2.VideoWriter('top_down_view.mp4', fourcc, 30.0, (processor.top_down_size, processor.top_down_size))
 
 for view in top_down_views:
-    # Remove rotation, just convert color space
-    out.write(cv2.cvtColor(view, cv2.COLOR_RGB2BGR))
+    rotated_view = cv2.rotate(view, cv2.ROTATE_90_CLOCKWISE)
+    out.write(cv2.cvtColor(rotated_view, cv2.COLOR_RGB2BGR))
 out.release()
 
-# Skalowanie osi Z
-positions[:, 2] = positions[:, 2] / 75
-
-# Wizualizacja trajektorii 3D z equal aspect ratio
-fig = plt.figure(figsize=(15, 15))
+# Wizualizacja trajektorii 3D
+fig = plt.figure(figsize=(10, 10))
 ax = fig.add_subplot(111, projection='3d')
 ax.plot(positions[:, 0], positions[:, 1], positions[:, 2])
-
-# Ustawienie równych skal dla wszystkich osi
-max_range = np.array([
-    positions[:, 0].max() - positions[:, 0].min(),
-    positions[:, 1].max() - positions[:, 1].min(),
-    positions[:, 2].max() - positions[:, 2].min()
-]).max() / 2.0
-
-mid_x = (positions[:, 0].max() + positions[:, 0].min()) * 0.5
-mid_y = (positions[:, 1].max() + positions[:, 1].min()) * 0.5
-mid_z = (positions[:, 2].max() + positions[:, 2].min()) * 0.5
-
-ax.set_xlim(mid_x - max_range, mid_x + max_range)
-ax.set_ylim(mid_y - max_range)
-ax.set_zlim(mid_z - max_range, mid_z + max_range)
-
 ax.set_xlabel('X [m]')
 ax.set_ylabel('Y [m]')
 ax.set_zlabel('Z [m]')
@@ -413,38 +511,8 @@ ax.set_title('Trajektoria kamery')
 # Dodanie punktu początkowego i końcowego
 ax.scatter(positions[0, 0], positions[0, 1], positions[0, 2], color='green', s=100, label='Start')
 ax.scatter(positions[-1, 0], positions[-1, 1], positions[-1, 2], color='red', s=100, label='End')
-
-# Przed wyświetleniem trajektorii, zmniejsz rozmiar final_view
-scale_factor = 0.2  # zmniejsz obraz do 20% oryginalnego rozmiaru
-final_view_small = cv2.resize(final_view, 
-                            (int(final_view.shape[1] * scale_factor), 
-                             int(final_view.shape[0] * scale_factor)), 
-                            interpolation=cv2.INTER_AREA)
-
-# Przygotowanie siatki dla obrazu
-x = np.linspace(mid_x - max_range, mid_x + max_range, final_view_small.shape[1])
-y = np.linspace(mid_y - max_range, mid_y + max_range, final_view_small.shape[0])
-X, Y = np.meshgrid(x, y)
-Z = np.zeros_like(X) - max_range/2  # obniż płaszczyznę obrazu poniżej trajektorii
-
-# Najpierw wyświetl obraz na płaszczyźnie XY
-ax.plot_surface(X, Y, Z, 
-                rstride=2,  # zmniejsz odstęp między wierszami
-                cstride=2,  # zmniejsz odstęp między kolumnami
-                facecolors=final_view_small/255.0, 
-                shade=False)
-
-# Następnie wyświetl trajektorię (będzie nad obrazem)
-ax.plot(positions[:, 0], positions[:, 1], positions[:, 2], linewidth=2, color='blue')
-
-# Dodanie punktu początkowego i końcowego
-ax.scatter(positions[0, 0], positions[0, 1], positions[0, 2], color='green', s=100)  # bez label
-ax.scatter(positions[-1, 0], positions[-1, 1], positions[-1, 2], color='red', s=100)  # bez label
-
-# Ustaw lepszy kąt widzenia
-ax.view_init(elev=30, azim=45)
-
 ax.legend()
+
 plt.show()
 
 # Wyświetlenie podstawowych statystyk

@@ -2,6 +2,7 @@ from PIL import Image
 from tqdm import tqdm
 import cv2
 from math import sqrt, pi, atan2
+import time
 
 def gaussian_kernel(size=5, sigma=1.4):
     # Generowanie kernela Gaussa używając list comprehension
@@ -13,16 +14,13 @@ def convolve(image, kernel):
     height, width = len(image), len(image[0])
     k_size = len(kernel)
     offset = k_size // 2
-    result = []
+    
     with tqdm(total=height-2*offset, desc="Applying convolution") as pbar:
-        for y in range(offset, height-offset):
-            row = []
-            for x in range(offset, width-offset):
-                val = sum(kernel[i][j] * image[y-offset+i][x-offset+j] 
-                    for i in range(k_size) for j in range(k_size))
-                row.append(val)
-            result.append(row)
-            pbar.update(1)
+        result = [[sum(kernel[i][j] * image[y-offset+i][x-offset+j] 
+                  for i in range(k_size) for j in range(k_size))
+                  for x in range(offset, width-offset)]
+                  for y in range(offset, height-offset)]
+        [pbar.update(1) for _ in range(height-2*offset)]
     return result
 
 def sobel_filters():
@@ -32,42 +30,36 @@ def sobel_filters():
 
 def non_maximum_suppression(mag, angle):
     height, width = len(mag), len(mag[0])
+    # Utwórz najpierw pełną tablicę zer o wymiarach obrazu wejściowego
     result = [[0 for _ in range(width)] for _ in range(height)]
     
-    for y in range(1, height-1):
-        for x in range(1, width-1):
-            angle_val = angle[y][x] % 180
-            q = 255
-            r = 255
-            
-            if (0 <= angle_val < 22.5) or (157.5 <= angle_val <= 180):
-                q = mag[y][x+1]
-                r = mag[y][x-1]
-            elif 22.5 <= angle_val < 67.5:
-                q = mag[y+1][x-1]
-                r = mag[y-1][x+1]
-            elif 67.5 <= angle_val < 112.5:
-                q = mag[y+1][x]
-                r = mag[y-1][x]
-            elif 112.5 <= angle_val < 157.5:
-                q = mag[y-1][x-1]
-                r = mag[y+1][x+1]
-                
-            if mag[y][x] >= q and mag[y][x] >= r:
-                result[y][x] = mag[y][x]
-                
+    # Wypełnij środkową część tablicy używając list comprehension dla wartości niezerowych
+    inner_result = [[mag[y][x] if all([
+            (mag[y][x] >= (mag[y][x+1] if (0 <= angle[y][x] % 180 < 22.5) or (157.5 <= angle[y][x] % 180 <= 180) else
+                          mag[y+1][x-1] if 22.5 <= angle[y][x] % 180 < 67.5 else
+                          mag[y+1][x] if 67.5 <= angle[y][x] % 180 < 112.5 else
+                          mag[y-1][x-1])),
+            (mag[y][x] >= (mag[y][x-1] if (0 <= angle[y][x] % 180 < 22.5) or (157.5 <= angle[y][x] % 180 <= 180) else
+                          mag[y-1][x+1] if 22.5 <= angle[y][x] % 180 < 67.5 else
+                          mag[y-1][x] if 67.5 <= angle[y][x] % 180 < 112.5 else
+                          mag[y+1][x+1]))
+            ]) else 0
+            for x in range(1, width-1)]
+            for y in range(1, height-1)]
+    
+    result = [[inner_result[y-1][x-1] if 0 < y < height-1 and 0 < x < width-1 else 0
+              for x in range(width)]
+             for y in range(height)]
+    
     return result
 
 def convert_to_bytes(matrix):
     height, width = len(matrix), len(matrix[0])
-    byte_array = bytearray(width * height)
-    idx = 0
     with tqdm(total=height, desc="Converting to image") as pbar:
-        for y in range(height):
-            for x in range(width):
-                byte_array[idx] = min(255, max(0, int(matrix[y][x])))
-                idx += 1
-            pbar.update(1)
+        byte_array = bytearray([min(255, max(0, int(matrix[y][x])))
+                              for y in range(height)
+                              for x in range(width)])
+        [pbar.update(1) for _ in range(height)]
     return bytes(byte_array)
 
 def canny_edge_detection(image_path, output_path, low_threshold=50, high_threshold=150):
@@ -137,5 +129,11 @@ def prewitt_edge_detection(image_path, output_path):
     result_img.save(output_path)
 
 if __name__ == "__main__":
+    start_time = time.time()
+    
     prewitt_edge_detection("pg.jpg", "pg_edges_prewitt.jpg")
     canny_edge_detection("pg.jpg", "pg_edges_canny.jpg")
+    
+    end_time = time.time()
+    execution_time = end_time - start_time
+    print(f"\nCałkowity czas wykonania: {execution_time:.2f} sekund")

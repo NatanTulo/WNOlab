@@ -13,42 +13,28 @@ def gaussian_kernel(size=5, sigma=1.4):
 
 def convolve_chunk(args):
     chunk, kernel, start_y, width, k_size, offset = args
-    result = []
-    for y in range(len(chunk)):
-        row = []
-        for x in range(offset, width-offset):
-            val = sum(kernel[i][j] * chunk[i][x-offset+j]
-                     for i in range(k_size)
-                     for j in range(k_size))
-            row.append(val)
-        result.append(row)
-    return result
+    return [[sum(kernel[i][j] * chunk[i][x-offset+j]
+                for i in range(k_size)
+                for j in range(k_size))
+             for x in range(offset, width-offset)]
+            for y in range(len(chunk))]
 
 def convolve(image, kernel):
     height, width = len(image), len(image[0])
     k_size = len(kernel)
     offset = k_size // 2
     
-    # Podziel obraz na chunki dla każdego wątku
-    num_threads = 8  # Możesz dostosować liczbę wątków
+    num_threads = 8
     chunk_size = (height - 2*offset) // num_threads
-    chunks = []
     
-    for i in range(num_threads):
-        start_y = i * chunk_size + offset
-        end_y = start_y + chunk_size if i < num_threads-1 else height-offset
-        chunk = image[start_y-offset:end_y+offset]
-        chunks.append((chunk, kernel, start_y, width, k_size, offset))
+    chunks = [(image[i*chunk_size+offset-offset : (i*chunk_size+chunk_size+offset if i < num_threads-1 else height-offset)+offset],
+               kernel, i*chunk_size+offset, width, k_size, offset)
+              for i in range(num_threads)]
 
     with ThreadPoolExecutor(max_workers=num_threads) as executor:
         results = list(executor.map(convolve_chunk, chunks))
     
-    # Połącz wyniki
-    final_result = []
-    for chunk_result in results:
-        final_result.extend(chunk_result)
-    
-    return final_result
+    return [row for chunk_result in results for row in chunk_result]
 
 def sobel_filters():
     Kx = [[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]]
@@ -64,24 +50,21 @@ def parallel_gradient_calculation(image, Kx, Ky):
 
 def non_maximum_suppression(mag, angle):
     height, width = len(mag), len(mag[0])
-    result = [[0 for _ in range(width)] for _ in range(height)]
+    angle_mod = [[a % 180 for a in row] for row in angle]
     
-    for y in range(1, height-1):
-        for x in range(1, width-1):
-            current_angle = angle[y][x] % 180
-            current_mag = mag[y][x]
-            
-            # Używamy list comprehension do określenia sąsiadów
-            neighbors = (
-                [mag[y][x-1], mag[y][x+1]] if (current_angle < 22.5 or current_angle >= 157.5) else
-                [mag[y-1][x+1], mag[y+1][x-1]] if (22.5 <= current_angle < 67.5) else
-                [mag[y-1][x], mag[y+1][x]] if (67.5 <= current_angle < 112.5) else
-                [mag[y-1][x-1], mag[y+1][x+1]]
-            )
-            
-            result[y][x] = current_mag if current_mag >= max(neighbors) else 0
+    def get_neighbors(y, x):
+        curr_angle = angle_mod[y][x]
+        return (
+            [mag[y][x-1], mag[y][x+1]] if (curr_angle < 22.5 or curr_angle >= 157.5) else
+            [mag[y-1][x+1], mag[y+1][x-1]] if (22.5 <= curr_angle < 67.5) else
+            [mag[y-1][x], mag[y+1][x]] if (67.5 <= curr_angle < 112.5) else
+            [mag[y-1][x-1], mag[y+1][x+1]]
+        )
     
-    return result
+    return [[mag[y][x] if (0 < y < height-1 and 0 < x < width-1 and 
+                          mag[y][x] >= max(get_neighbors(y, x))) else 0
+             for x in range(width)]
+            for y in range(height)]
 
 def convert_to_bytes(matrix):
     return bytes(bytearray([min(255, max(0, int(val))) 
